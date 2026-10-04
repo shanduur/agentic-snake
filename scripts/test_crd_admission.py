@@ -99,7 +99,10 @@ def main() -> None:
                 )
             print("PASS " + label, flush=True)
 
-        check("valid source admitted", valid, True)
+        check("valid source admitted without status", valid, True)
+        absent_spec = copy.deepcopy(valid)
+        del absent_spec["spec"]
+        check("absent root spec admitted", absent_spec, True)
         for field in ["kind", "name", "key"]:
             obj = copy.deepcopy(valid)
             del obj["spec"]["sources"][0][field]

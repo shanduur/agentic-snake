@@ -38,7 +38,10 @@ development dependencies are locked in `controller/uv.lock`.
 
 Typed Python API models define CRD field contracts. The generator emits
 `deploy/skillset-crd.yaml`; that file is a committed install artifact, not a
-second schema source. Change the models and run:
+second schema source. Non-null model defaults are currently unsupported and
+fail generation, including `False`, zero, empty strings and empty collections.
+Existing `None` defaults represent optional-field absence, not API-server
+defaulting. Change the models and run:
 
 ```sh
 make generate

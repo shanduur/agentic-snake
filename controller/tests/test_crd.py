@@ -6,11 +6,33 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import ValidationError, create_model
 
+import agentic_snake.crd as crd_module
 from agentic_snake.crd import SkillSetSpec, SourceReference, crd_document, main, render
 
 CRD = Path(__file__).resolve().parents[2] / "deploy/skillset-crd.yaml"
+
+
+@pytest.mark.parametrize(
+    ("annotation", "default"),
+    [
+        (str, "enabled"),
+        (str, ""),
+        (bool, False),
+        (int, 0),
+        (list[str], []),
+        (dict[str, str], {}),
+        (str | None, "enabled"),
+    ],
+)
+def test_generator_rejects_non_null_model_defaults(monkeypatch, annotation, default):
+    model = create_model(
+        "DefaultedSkillSet", __base__=crd_module.SkillSet, setting=(annotation, default)
+    )
+    monkeypatch.setattr(crd_module, "SkillSet", model)
+    with pytest.raises(ValueError, match="non-null defaults are unsupported"):
+        crd_module.resource_schema()
 
 
 def test_generated_document_matches_checked_in_artifact():
