@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentic-snake-controller"
+version = "0.1.0"
+description = "Namespace-scoped SkillSet source observer"
+requires-python = ">=3.13,<3.14"
+dependencies = ["kr8s>=0.20,<1"]
+
+[project.scripts]
+agentic-snake-controller = "agentic_snake.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.12,<1", "ty>=0.0.1a1,<1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentic_snake"]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,87 @@
+# Copyright (c) Mateusz Urbanek
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-snake
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentic-snake-controller
+  namespace: agentic-snake
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentic-snake-controller
+  namespace: agentic-snake
+rules:
+  - apiGroups: [agentic-snake.dev]
+    resources: [skillsets]
+    verbs: [get, list]
+  - apiGroups: [agentic-snake.dev]
+    resources: [skillsets/status]
+    verbs: [get, patch]
+  - apiGroups: [""]
+    resources: [configmaps, secrets]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentic-snake-controller
+  namespace: agentic-snake
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentic-snake-controller
+subjects:
+  - kind: ServiceAccount
+    name: agentic-snake-controller
+    namespace: agentic-snake
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentic-snake-controller
+  namespace: agentic-snake
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: agentic-snake-controller
+  template:
+    metadata:
+      labels:
+        app: agentic-snake-controller
+    spec:
+      serviceAccountName: agentic-snake-controller
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          image: agentic-snake-controller:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          args: ["--namespace", "agentic-snake", "--poll-interval", "30"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
