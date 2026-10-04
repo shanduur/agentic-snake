@@ -28,11 +28,12 @@ and replacement. The initial controller does not implement this protocol.
 
 ## Bootstrap boundary
 
-The first implementation records validated SkillSet source revisions and provides
-a single-upstream MCP HTTP proxy. It does not create Agent or MemorySpace CRDs
-without implementations. It does not yet offer high-availability controller
-leadership, multi-upstream aggregation, authenticated task execution, or memory.
-The proxy is a transport component, not an authorization boundary in this version.
+The controller records validated SkillSet source revisions. The Go MCP gateway
+owns upstream protocol sessions, tool discovery, aggregation, and call routing;
+[its decision](mcp-gateway.md) defines periodic sweeps and stale-tool withdrawal.
+It does not create Agent or MemorySpace CRDs without implementations. This version
+does not offer high-availability controller leadership, authenticated task
+execution, or memory. The gateway is not an authorization boundary.
 
 ## Packaging
 
@@ -47,8 +48,10 @@ interpreter symlinks. Image smoke tests check imports and absence of dev tools.
 Invalid skill sources retain the last accepted revision but report current
 validation failure. Accepted does not mean active. Secret deletion or credential
 revocation will require fail-closed enforcement in the future runtime/gateway.
-The HTTP proxy must not retry mutations. An interrupted external mutation can
-have an uncertain outcome; durable orchestration must reconcile that uncertainty.
+The MCP gateway must not automatically replay tool calls, regardless of tool
+annotations. An interrupted external mutation can have an uncertain outcome;
+durable orchestration must reconcile that uncertainty. Failed discovery withdraws
+the affected server's catalog until a later sweep succeeds.
 
 ## References
 

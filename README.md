@@ -11,12 +11,14 @@ The initial controller validates namespace-local SkillSet sources and records
 source revisions. It does not run an LLM, deliver skill bundles to agents, or
 claim that a recorded revision has been activated by a runtime.
 
-The initial MCP proxy forwards a single configured HTTP upstream. Multi-upstream
-aggregation, agent authentication, authorization, credential brokering, durable
-orchestration, and shared memory are not implemented yet. Do not expose the proxy
-to untrusted clients.
+The MCP gateway discovers and aggregates tools from explicitly configured HTTP
+upstreams, periodically refreshing the catalog and withdrawing stale routes.
+Agent authentication, authorization, credential brokering, durable orchestration,
+and shared memory are not implemented yet. Upstream sessions are service-owned,
+not isolated per agent. Do not expose the gateway to untrusted clients.
 
 See [the architecture decision](docs/architecture.md),
+[the gateway decision](docs/mcp-gateway.md),
 [the controller documentation](controller/README.md),
 and [the proxy documentation](proxy/README.md) for the implemented contracts.
 

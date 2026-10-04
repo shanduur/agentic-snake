@@ -2,9 +2,15 @@
 
 Agentic Snake is an early bootstrap and is not ready for untrusted tenants.
 
-- Do not expose the MCP proxy publicly. It does not authenticate callers or
+- Do not expose the MCP gateway publicly. It does not authenticate callers or
   implement per-agent authorization. Put it behind an independently authenticated
-  boundary and restrict network access to the configured upstream.
+  boundary and restrict network access to the configured upstreams.
+- Upstream MCP sessions are service-owned and shared by trusted callers. They do
+  not isolate each agent's upstream state or credentials. Per-agent sessions and
+  access policy are required before multi-tenant use.
+- Tool descriptions, schemas, annotations, and results are upstream-provided
+  data, not authorization grants. Periodic discovery withdraws stale routes but
+  is not instantaneous credential or permission revocation.
 - The controller's namespaced Role can read Secrets in its namespace. Treat that
   namespace as a trusted administrative boundary. Kubernetes RBAC does not make
   untrusted SkillSet authors safe co-tenants with unrelated secrets.

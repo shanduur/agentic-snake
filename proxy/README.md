@@ -1,17 +1,102 @@
-# MCP HTTP proxy
+# MCP tools gateway
 
-A **single trusted upstream** Streamable HTTP MCP endpoint is exposed as `GET`, `POST`, and `DELETE /mcp`. This is a transparent reverse proxy, **not** an MCP aggregator: it does not discover tools, merge servers, translate transports, replay requests, retry mutations, or terminate MCP sessions. `GET /healthz` checks only that this process is serving; it does not probe the upstream.
+The Go service is an MCP server for agents and an MCP client of several trusted
+Streamable HTTP upstreams. It exposes the full aggregated tool catalog through
+standard `tools/list` and routes `tools/call` to the original server and tool.
+It is not a transparent HTTP forwarder.
+
+## Run
+
+From the repository root:
 
 ```sh
-cd proxy
-go run ./cmd/mcp-proxy --upstream http://127.0.0.1:3000/mcp
-# Optionally: --listen 127.0.0.1:8081
+make build
+bin/mcp-proxy \
+  --upstream alpha=http://127.0.0.1:9001/mcp \
+  --upstream beta=http://127.0.0.1:9002/mcp \
+  --refresh-interval 30s
 ```
 
-`--upstream` is required: an HTTP(S) endpoint URL with a canonical, non-root path; credentials, queries, fragments, escaped paths, and dot segments are rejected. The proxy routes `/mcp` to that **exact** endpoint path, preserving the request method/body and MCP session/protocol headers. GET SSE streams are flushed as data arrives; client cancellation propagates upstream. The server shuts down on SIGINT/SIGTERM, allowing up to 10 seconds for in-flight requests before forcing them closed. No request retries are performed.
+Agents connect to `http://127.0.0.1:8080/mcp`. `/healthz` is process liveness,
+not a guarantee that every upstream is reachable.
 
-**Security boundary:** There is **no downstream authentication or authorization**. Never bind to a public address or expose this proxy via public ingress without adding an external, independently reviewed authentication/access-control layer. The default listener is loopback (`127.0.0.1:8080`); an explicit `--listen` can change it, at the operator's risk. Browser-origin requests are rejected. The proxy deliberately forwards only `Accept`, `Content-Type`, `Mcp-Session-Id`, `Mcp-Protocol-Version`, and `Last-Event-Id`. Downstream `Authorization`, cookies, `Forwarded`, `X-Forwarded-*`, and other identity headers are not sent upstream; upstream `Set-Cookie` is stripped from responses. There is no upstream credential configuration: use a trusted upstream reachable without credentials. TLS to HTTPS upstreams uses Go's system trust roots.
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--upstream NAME=URL` | required | Repeat for each trusted server; names must be unique. |
+| `--listen` | `127.0.0.1:8080` | HTTP listener; keep behind a trusted boundary. |
+| `--refresh-interval` | `30s` | Interval between periodic complete discovery sweeps. |
+| `--discovery-timeout` | `10s` | Deadline for each upstream's discovery operation. |
+| `--call-timeout` | `30s` | Deadline for each upstream tool call. |
 
-Bounds: up to 64 simultaneous MCP requests; excess requests receive 503. Request bodies are limited to 8 MiB (known oversize receives 413); the HTTP server limits headers to 16 KiB and reads headers within 5 seconds. Idle connections time out after 60 seconds. Streaming responses intentionally have no fixed duration or response-size cap; one stream occupies one slot until it closes. Run this behind a trusted access-control/traffic-limiting layer if your threat model requires more. This bootstrap does not enforce MCP message validity, origin allowlists beyond rejecting Origin, per-client quotas, or DNS/IP egress restrictions on the configured upstream.
+CLI durations must be positive. The Go `proxy.Config` API accepts zero durations
+to select defaults. Endpoints must be canonical HTTP(S) URLs with an explicit
+path; credentials, query strings, fragments, and redirects are not accepted.
+This first slice does not configure upstream credentials.
 
-Verification (from `proxy/`): `GOWORK=off go test -race ./...`, `GOWORK=off go vet ./...`, and `GOWORK=off go build -o /tmp/mcp-proxy ./cmd/mcp-proxy`.
+## Discovery and routing
+
+- Startup and periodic sweeps collect each server's complete paginated inventory.
+- Successful discovery replaces that server's inventory, removing absent tools.
+  An empty result removes all its tools.
+- Failed, malformed, or incomplete discovery withdraws that server's tools from
+  both listing and routing. A later successful sweep restores its inventory.
+  Other servers retain their own inventories.
+- Upstream `notifications/tools/list_changed` requests coalesce and trigger an
+  earlier sweep. Polling remains active when notifications are absent or lost.
+- Tool names include a stable upstream namespace. For example, the original
+  `same` tool from `alpha` is exported as `mcp_5_alpha_same`. Names that would
+  exceed the protocol limit use a separate `mcp_h_` namespace and a full hash of
+  the upstream identity and original name. Duplicate exports fail discovery
+  instead of silently replacing a tool. Calls use an explicit routing table;
+  arbitrary names are never parsed into upstream addresses.
+- Tool definitions retain their original schemas and metadata. Ordinary tool
+  results retain content, structured content, and execution-error status.
+- Input and output schemas must have an object root and pass JSON Schema
+  compilation. Local references are supported. Schemas requiring external
+  documents are rejected; discovery never fetches peer-controlled URLs or files.
+- Calls are not automatically replayed, including after an upstream session is
+  lost. A timed-out mutation may already have taken effect.
+
+Each discovery operation publishes a complete server inventory. Pagination
+between separate downstream requests is not a pinned transaction across catalog
+changes; clients should rediscover when notified. The configured interval is
+between sweeps, not an instantaneous revocation deadline: discovery time also
+contributes to how long a silent change takes to observe.
+
+## Sessions and boundaries
+
+Upstream sessions are service-owned and shared by trusted callers. Downstream
+session IDs, authorization headers, and cookies are not used as upstream identity.
+Do not treat this as per-agent upstream-session isolation or tenant authorization.
+
+The gateway rejects browser-origin requests and bounds HTTP request bodies and
+concurrency. Upstream JSON/error bodies and individual SSE events are capped at
+8 MiB; each server inventory is capped at 1,024 tools, 32 pages, and 2 MiB of
+encoded descriptors. At most 32 upstreams are configured. Downstream sessions
+expire after five minutes of inactivity, but there is no session-count cap;
+restrict connection rates at the trusted ingress boundary. Shutdown cancels
+active calls, stops discovery, closes protocol sessions, and drains HTTP handlers.
+
+Only tool aggregation over Streamable HTTP is in scope. There is no stdio process
+supervision, Kubernetes endpoint discovery, resource/prompt aggregation, sampling,
+elicitation, task execution, or multi-round-trip input negotiation. Task-required
+tools are not available as synchronous calls.
+
+**Do not expose the gateway to untrusted clients.** Authentication, per-agent
+access policy, credential brokering, and stronger upstream-state isolation remain
+separate work. Tool metadata is untrusted data, not a permission grant.
+
+## Development
+
+```sh
+make check build
+```
+
+Tests use the official MCP SDK's clients and HTTP servers rather than a mocked
+forwarding interface. They cover discovery, collisions, pagination, routing,
+periodic removal without notifications, failure/recovery, call deadlines,
+notifications, and session shutdown. The CLI test builds and runs the executable
+and checks graceful shutdown with an active downstream session.
+
+See [the gateway decision](../docs/mcp-gateway.md) and
+[the security boundary](../SECURITY.md) for ownership and failure semantics.
