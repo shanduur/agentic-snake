@@ -34,48 +34,6 @@ make images smoke
 Make owns the commands. CI invokes those same targets. Python production and
 development dependencies are locked in `controller/uv.lock`.
 
-## CRD generation and validation
-
-Typed Python API models define CRD field contracts. The generator emits
-`deploy/skillset-crd.yaml`; that file is a committed install artifact, not a
-second schema source. Non-null model defaults are currently unsupported and
-fail generation, including `False`, zero, empty strings and empty collections.
-Existing `None` defaults represent optional-field absence, not API-server
-defaulting. Change the models and run:
-
-```sh
-make generate
-make check-generated validate-crds
-make test-crds
-```
-
-`make check-generated` compares the artifact without rewriting it and fails on
-drift. `make validate-crds` validates the CRD document, including its embedded
-schema definitions, against Kubernetes 1.34.0's official OpenAPI specification.
-Make downloads the checksum-pinned specification into `.cache/`. A verified
-cached copy permits offline validation. To change the Kubernetes version,
-update the URL/version, checksum, and matching Kind node image together.
-
-The official CRD OpenAPI model describes the shape of a CRD document; it does
-not prove that an embedded schema obeys Kubernetes structural-schema rules.
-`make test-crds` checks that separately on a disposable Kind API server. It
-installs the generated CRD, tests valid and invalid custom resources, and proves
-that a deliberately nonstructural CRD is rejected. CI runs both validation
-layers and the drift gate. Kind, kubectl, and Docker are required for this
-API-server test. The harness uses the same explicit temporary kubeconfig for
-creation, admission, and deletion. It removes private access state only after
-cluster deletion succeeds; failed cleanup retains that state for recovery.
-
-Pydantic and JSON Schema tooling are development dependencies. They do not ship
-in the controller's production image.
-
-Kubernetes 1.34 emits `unrecognized format "int64"` for the existing
-`status.observedGeneration` annotation. Its [format registry and validation
-postprocessor](https://github.com/kubernetes/kubernetes/blob/v1.34.0/staging/src/k8s.io/apiextensions-apiserver/pkg/apiserver/validation/formats.go)
-do not enforce that format. The generator retains the annotation to preserve
-the published schema; integer typing remains enforced, but the format is not an
-integer-range constraint. This warning does not bypass either validation gate.
-
 ## Container packaging
 
 The controller uses the exact `gcr.io/distroless/python3:nonroot` image name,

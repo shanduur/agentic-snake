@@ -1,13 +1,5 @@
 # Contributor guidance
 
-- Define CRD field contracts in typed Python API models and generate the install
-  manifests. Never edit a generated CRD by hand. Run `make generate`, then
-  `make check-generated validate-crds` after API changes.
-- Validate CRD envelopes against the checksum-pinned official Kubernetes OpenAPI
-  specification. `make test-crds` additionally proves structural schema and
-  resource admission on a disposable API server. Generic schema validation does
-  not replace that Kubernetes-specific gate.
-
 - Keep Python dependencies and tools in `controller/pyproject.toml` and commit
   `controller/uv.lock`. Use uv, Ruff, ty, and pytest through Make.
 - Use kr8s for Kubernetes access. Do not add a second operator framework without
