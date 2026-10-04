@@ -1,0 +1,165 @@
+# Copyright (c) Mateusz Urbanek
+"""Generation-only typed SkillSet contract and deterministic CRD artifact.
+
+Pydantic is a dev dependency: the running observer does not import this module.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
+from pydantic import BaseModel, Field
+
+
+class SourceReference(BaseModel):
+    kind: Literal["ConfigMap", "Secret"]
+    name: str = Field(max_length=253, pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+    key: str = Field(min_length=1, max_length=253)
+
+
+class SkillSetSpec(BaseModel):
+    sources: list[SourceReference] = Field(min_length=1, max_length=32)
+
+
+class SkillSetStatus(BaseModel):
+    valid: bool | None = None
+    observedGeneration: int | None = Field(default=None, json_schema_extra={"format": "int64"})
+    lastValidRevision: str | None = None
+    sourceVersions: list[str] | None = Field(default=None, max_length=32)
+
+
+class SkillSet(BaseModel):
+    apiVersion: str
+    kind: str
+    metadata: dict[str, Any]
+    spec: SkillSetSpec
+    status: SkillSetStatus | None = None
+
+
+# Only keywords supported by the intended Kubernetes structural schema subset.
+_SCHEMA_KEYS = frozenset(
+    {
+        "type",
+        "properties",
+        "required",
+        "items",
+        "enum",
+        "minItems",
+        "maxItems",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "format",
+        "additionalProperties",
+    }
+)
+
+
+def _structural(value: Any, definitions: dict[str, Any]) -> Any:
+    if isinstance(value, list):
+        return [_structural(item, definitions) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if "$ref" in value:
+        reference = value["$ref"]
+        if (
+            set(value) != {"$ref"}
+            or not isinstance(reference, str)
+            or not reference.startswith("#/$defs/")
+        ):
+            raise ValueError(f"unsupported schema reference: {reference}")
+        return _structural(definitions[reference.removeprefix("#/$defs/")], definitions)
+    if "anyOf" in value:
+        options = value["anyOf"]
+        non_null = [option for option in options if option != {"type": "null"}]
+        extras = set(value) - {"anyOf", "default", "title", "description", "format"}
+        if len(options) != 2 or len(non_null) != 1 or extras:
+            raise ValueError("only nullable fields may use anyOf")
+        result = _structural(non_null[0], definitions)
+        if "format" in value:
+            result["format"] = value["format"]
+        return result
+    if "properties" in value:
+        properties = value["properties"]
+        return {
+            **_structural(
+                {key: child for key, child in value.items() if key != "properties"}, definitions
+            ),
+            "properties": {
+                key: _structural(child, definitions) for key, child in properties.items()
+            },
+        }
+    unsupported = set(value) - _SCHEMA_KEYS - {"title", "default", "description"}
+    if unsupported:
+        raise ValueError(f"unsupported schema keywords: {sorted(unsupported)}")
+    return {
+        key: _structural(child, definitions) for key, child in value.items() if key in _SCHEMA_KEYS
+    }
+
+
+def resource_schema() -> dict[str, Any]:
+    raw = SkillSet.model_json_schema()
+    definitions = raw.pop("$defs")
+    schema = _structural(raw, definitions)
+    # The existing CRD permits missing root fields; nested spec.sources stays required.
+    schema.pop("required", None)
+    # Kubernetes ObjectMeta is governed by the API server, not an arbitrary value map.
+    schema["properties"]["metadata"] = {"type": "object"}
+    return schema
+
+
+def crd_document() -> dict[str, Any]:
+    """Construct the envelope in code, independently of the checked-in YAML."""
+    return {
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {"name": "skillsets.agentic-snake.dev"},
+        "spec": {
+            "group": "agentic-snake.dev",
+            "scope": "Namespaced",
+            "names": {
+                "plural": "skillsets",
+                "singular": "skillset",
+                "kind": "SkillSet",
+                "shortNames": ["skills"],
+            },
+            "versions": [
+                {
+                    "name": "v1alpha1",
+                    "served": True,
+                    "storage": True,
+                    "subresources": {"status": {}},
+                    "schema": {"openAPIV3Schema": resource_schema()},
+                }
+            ],
+        },
+    }
+
+
+def render() -> str:
+    return "# Copyright (c) Mateusz Urbanek\n" + yaml.safe_dump(
+        crd_document(), sort_keys=False, allow_unicode=True
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate/check the SkillSet CRD")
+    parser.add_argument("--output", type=Path, required=True, help="CRD YAML artifact")
+    parser.add_argument("--check", action="store_true", help="fail on drift; never write")
+    args = parser.parse_args()
+    expected = render()
+    if args.check:
+        if not args.output.is_file() or args.output.read_text() != expected:
+            print(f"CRD drift: {args.output}", file=sys.stderr)
+            return 1
+        return 0
+    args.output.write_text(expected)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
